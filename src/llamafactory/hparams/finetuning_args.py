@@ -416,6 +416,10 @@ class FinetuningArguments(
         default=False,
         metadata={"help": "Whether or not to make only the parameters in the expanded blocks trainable."},
     )
+    use_muon: bool = field(
+        default=False,
+        metadata={"help": "Whether or not to use the Muon optimizer."},
+    )
     use_adam_mini: bool = field(
         default=False,
         metadata={"help": "Whether or not to use the Adam-mini optimizer."},

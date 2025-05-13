@@ -1,0 +1,2 @@
+export FORCE_TORCHRUN=1
+export CUDA_VISIBLE_DEVICES="0"

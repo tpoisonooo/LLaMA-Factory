@@ -38,6 +38,618 @@ from ..extras.packages import is_apollo_available, is_galore_available, is_ray_a
 from ..hparams import FinetuningArguments, ModelArguments
 from ..model import find_all_linear_modules, load_model, load_tokenizer, load_valuehead_params
 
+import math
+import torch
+import torch.distributed as dist
+from torch.optim import Optimizer
+from typing import Dict, List
+from .matmul_transpose_triton import matmul_transpose_assign
+
+def fast_newtonschulz(G: torch.Tensor, steps: int=5) -> torch.Tensor:
+    """
+    adapted from https://github.com/KellerJordan/Muon/blob/master/muon.py
+    Arguments:
+        G: The gradient or momentum matrix to be orthogonalized.
+        steps: Number of Newton-Schulz iterations.
+    """
+    assert G.ndim >= 2
+    # copy from https://kexue.fm/archives/10922
+    params = [
+        (4.6182, -12.9582, 9.3299),
+        (3.8496, -7.9585, 4.3052),
+        (3.5204, -7.2918, 4.0606),
+        (3.2067, -6.8243, 4.2802),
+        (3.2978, -5.7848, 3.8917)
+    ]
+    a, b, c = (3.4445, -4.7750,  2.0315)
+    X = G.bfloat16()
+    if G.size(-2) > G.size(-1):
+        X = X.mT
+
+    buf1 = torch.empty(X.size(0), X.size(0), dtype=X.dtype, device=X.device)
+    buf2 = torch.empty(X.size(0), X.size(0), dtype=X.dtype, device=X.device)
+    
+    # Ensure spectral norm is at most 1
+    X = X / (X.norm(dim=(-2, -1), keepdim=True) + 1e-7)
+    # Perform the NS iterations
+    for i in range(steps):
+        a,b,c = params[i]
+        matmul_transpose_assign(X, buf1)
+        matmul_transpose_assign(buf1, buf2)
+        B = b * buf1 + c * buf2
+        X = a * X + B @ X
+    
+    if G.size(-2) > G.size(-1):
+        X = X.mT
+    return X
+
+# This code snippet is a modified version adapted from the following GitHub repository:
+# https://github.com/KellerJordan/Muon/blob/master/muon.py
+@torch.compile
+def zeropower_via_newtonschulz5(G, steps):
+    """Newton-Schulz iteration to compute the zeroth power / orthogonalization of G.
+    We opt to use a quintic iteration whose coefficients are selected to maximize the slope at zero.
+    For the purpose of minimizing steps, it turns out to be empirically effective to keep increasing the slope at
+    zero even beyond the point where the iteration no longer converges all the way to one everywhere
+    on the interval. This iteration therefore does not produce UV^T but rather something like US'V^T
+    where S' is diagonal with S_{ii}' ~ Uniform(0.5, 1.5), which turns out not to hurt model
+    performance at all relative to UV^T, where USV^T = G is the SVD.
+    """
+    assert len(G.shape) == 2
+    a, b, c = (3.4445, -4.7750, 2.0315)
+    X = G.bfloat16()
+    if G.size(0) > G.size(1):
+        X = X.T
+    # Ensure spectral norm is at most 1
+    X = X / (X.norm() + 1e-7)
+    # Perform the NS iterations
+    for _ in range(steps):
+        A = X @ X.T
+        B = b * A + c * A @ A  # adapted from suggestion by @jxbz, @leloykun, and @YouJiacheng
+        X = a * X + B @ X
+
+    if G.size(0) > G.size(1):
+        X = X.T
+    return X
+
+
+class MuonBad(Optimizer):
+    """Muon - MomentUm Orthogonalized by Newton-schulz.
+    Muon internally runs standard SGD-momentum, and then performs an orthogonalization post-
+    processing step, in which each 2D parameter's update is replaced with the nearest orthogonal
+    matrix. To efficiently orthogonalize each update, we use a Newton-Schulz iteration, which has
+    the advantage that it can be stably run in bfloat16 on the GPU.
+    Some warnings:
+    - We believe this optimizer is unlikely to work well for training with small batch size.
+    - We believe it may not work well for finetuning pretrained models, but we haven't tested this.
+    Arguments:
+        muon_params: The parameters to be optimized by Muon.
+        lr: The learning rate. The updates will have spectral norm of `lr`. (0.02 is a good default)
+        momentum: The momentum used by the internal SGD. (0.95 is a good default)
+        nesterov: Whether to use Nesterov-style momentum in the internal SGD. (recommended)
+        ns_steps: The number of Newton-Schulz iterations to run. (6 is probably always enough)
+        adamw_params: The parameters to be optimized by AdamW. Any parameters in `muon_params` which are
+        {0, 1}-D or are detected as being the embed or lm_head will be optimized by AdamW as well.
+        adamw_lr: The learning rate for the internal AdamW.
+        adamw_betas: The betas for the internal AdamW.
+        adamw_eps: The epsilon for the internal AdamW.
+        adamw_wd: The weight decay for the internal AdamW.
+    """
+
+    def __init__(
+        self,
+        lr=1e-3,
+        wd=0.1,
+        muon_params=None,
+        momentum=0.95,
+        nesterov=True,
+        ns_steps=5,
+        adamw_params=None,
+        adamw_betas=(0.9, 0.95),
+        adamw_eps=1e-8,
+        distributed=False,
+        overlap_comm=False,
+    ):
+        defaults = dict(
+            lr=lr,
+            wd=wd,
+            momentum=momentum,
+            nesterov=nesterov,
+            ns_steps=ns_steps,
+            adamw_betas=adamw_betas,
+            adamw_eps=adamw_eps,
+            distributed=distributed,
+            overlap_comm=overlap_comm,
+        )
+
+        params = list(muon_params) if muon_params is not None else []
+        adamw_params = list(adamw_params) if adamw_params is not None else []
+        params.extend(adamw_params)
+
+        super().__init__(params, defaults)
+        # Sort parameters into those for which we will use Muon, and those for which we will not
+        for p in muon_params:
+            # Use Muon for every parameter in muon_params which is >= 2D and doesn't look like an embedding or head layer
+            assert p.ndim == 2, "Muon only supports 2D parameters"
+            self.state[p]["use_muon"] = True
+        for p in adamw_params:
+            # Do not use Muon for parameters in adamw_params
+            self.state[p]["use_muon"] = False
+            
+        for p in params:
+            if "use_muon" not in self.state[p]:
+                self.state[p]["use_muon"] = False  # Default to False if not set
+        
+        if distributed:
+            self._init_distributed_buffers()
+
+    def _init_distributed_buffers(self):
+        """Initialize buffers for distributed communication."""
+        for group in self.param_groups:
+            if not group['distributed']:
+                continue
+
+            for p in group['params']:
+                if not self.state[p]['use_muon']:
+                    continue
+
+                # Create buffers for reduce-scatter and all-gather
+                shape = p.shape
+                dtype = p.dtype
+                device = p.device
+
+                # For reduce-scatter (gradient accumulation)
+                self.state[p]['grad_shard'] = torch.zeros(
+                    (shape[0] // dist.get_world_size(), shape[1]),
+                    dtype=dtype, device=device
+                )
+
+                # For all-gather (parameter update)
+                self.state[p]['param_full'] = torch.zeros(
+                    shape, dtype=dtype, device=device
+                )
+
+                # For overlapping communication
+                if group['overlap_comm']:
+                    self.state[p]['grad_full'] = torch.zeros(
+                        shape, dtype=dtype, device=device
+                    )
+                    self.state[p]['grad_ready'] = torch.zeros(1, dtype=torch.bool, device=device)
+
+    def adjust_lr_for_muon(self, lr, param_shape):
+        A, B = param_shape[:2]
+        # We adjust the learning rate and weight decay based on the size of the parameter matrix
+        # as describted in the paper
+        adjusted_ratio = 0.2 * math.sqrt(max(A, B))
+        return lr * adjusted_ratio
+
+    def _distributed_grad_sync(self, p, group):
+        """Synchronize gradients across devices using reduce-scatter."""
+        if not group['distributed']:
+            return p.grad
+
+        state = self.state[p]
+        grad = p.grad
+
+        if group['overlap_comm']:
+            # Asynchronous communication path
+            if not state['grad_ready'].item():
+                # Start reduce-scatter
+                dist.reduce_scatter_tensor(
+                    state['grad_shard'], 
+                    grad,
+                    op=dist.ReduceOp.AVG,
+                    async_op=True
+                )
+                state['grad_ready'].fill_(True)
+                return None
+            else:
+                # Wait for completion
+                dist.barrier()
+                state['grad_ready'].fill_(False)
+                return state['grad_shard']
+        else:
+            # Synchronous communication path
+            dist.reduce_scatter_tensor(
+                state['grad_shard'], 
+                grad,
+                op=dist.ReduceOp.AVG
+            )
+            return state['grad_shard']
+
+    def _distributed_param_sync(self, p, group):
+        """Synchronize parameters across devices using all-gather."""
+        if not group['distributed']:
+            return
+
+        state = self.state[p]
+        if group['overlap_comm']:
+            # Asynchronous all-gather
+            dist.all_gather_into_tensor(
+                state['param_full'],
+                p.data,
+                async_op=True
+            )
+        else:
+            # Synchronous all-gather
+            dist.all_gather_into_tensor(
+                state['param_full'],
+                p.data
+            )
+
+        # Copy the full parameter back
+        p.data.copy_(state['param_full'])
+
+    def step(self, closure=None):
+        """Perform a single optimization step.
+        Args:
+            closure (Callable, optional): A closure that reevaluates the model
+                and returns the loss.
+        """
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        for group in self.param_groups:
+            ############################
+            #           Muon           #
+            ############################
+            # for p in group["params"]:
+            #     if 'use_muon' not in self.state[p]:
+            #         print(self.state[p].keys())
+            #         import pdb
+            #         pdb.set_trace()
+            #         pass
+            params = [p for p in group["params"] if 'use_muon' in self.state[p] and self.state[p]["use_muon"]]
+            # import pdb; pdb.set_trace()
+            lr = group["lr"]
+            wd = group["wd"]
+            momentum = group["momentum"]
+
+            # generate weight updates in distributed fashion
+            for p in params:
+                # sanity check
+                g = p.grad
+                if g is None:
+                    continue
+                if g.ndim > 2:
+                    g = g.view(g.size(0), -1)
+                assert g is not None
+
+                # calc update
+                state = self.state[p]
+                if "momentum_buffer" not in state:
+                    state["momentum_buffer"] = torch.zeros_like(g)
+                buf = state["momentum_buffer"]
+                buf.mul_(momentum).add_(g)
+                if group["nesterov"]:
+                    g = g.add(buf, alpha=momentum)
+                else:
+                    g = buf
+                u = fast_newtonschulz(g, steps=group["ns_steps"])
+
+                # scale update
+                adjusted_lr = self.adjust_lr_for_muon(lr, p.shape)
+
+                # apply weight decay
+                p.data.mul_(1 - lr * wd)
+
+                # apply update
+                p.data.add_(u, alpha=-adjusted_lr)
+
+            ############################
+            #       AdamW backup       #
+            ############################
+
+            params = [p for p in group["params"] if 'use_muon' not in self.state[p] or not self.state[p]["use_muon"]]
+            lr = group["lr"]
+            beta1, beta2 = group["adamw_betas"]
+            eps = group["adamw_eps"]
+            weight_decay = group["wd"]
+
+            for p in params:
+                g = p.grad
+                if g is None:
+                    continue
+                state = self.state[p]
+                if "step" not in state:
+                    state["step"] = 0
+                    state["moment1"] = torch.zeros_like(g)
+                    state["moment2"] = torch.zeros_like(g)
+                state["step"] += 1
+                step = state["step"]
+                buf1 = state["moment1"]
+                buf2 = state["moment2"]
+                buf1.lerp_(g, 1 - beta1)
+                buf2.lerp_(g.square(), 1 - beta2)
+
+                g = buf1 / (eps + buf2.sqrt())
+
+                bias_correction1 = 1 - beta1**step
+                bias_correction2 = 1 - beta2**step
+                scale = bias_correction1 / bias_correction2**0.5
+                p.data.mul_(1 - lr * weight_decay)
+                p.data.add_(g, alpha=-lr / scale)
+
+        return loss
+
+class Muon(Optimizer):
+    """Muon - MomentUm Orthogonalized by Newton-schulz.
+
+    Muon internally runs standard SGD-momentum, and then performs an orthogonalization post-
+    processing step, in which each 2D parameter's update is replaced with the nearest orthogonal
+    matrix. To efficiently orthogonalize each update, we use a Newton-Schulz iteration, which has
+    the advantage that it can be stably run in bfloat16 on the GPU.
+
+    Some warnings:
+    - We believe this optimizer is unlikely to work well for training with small batch size.
+    - We believe it may not work well for finetuning pretrained models, but we haven't tested this.
+
+    Arguments:
+        muon_params: The parameters to be optimized by Muon.
+        lr: The learning rate. The updates will have spectral norm of `lr`. (0.02 is a good default)
+        momentum: The momentum used by the internal SGD. (0.95 is a good default)
+        nesterov: Whether to use Nesterov-style momentum in the internal SGD. (recommended)
+        ns_steps: The number of Newton-Schulz iterations to run. (6 is probably always enough)
+        adamw_params: The parameters to be optimized by AdamW. Any parameters in `muon_params` which are
+        {0, 1}-D or are detected as being the embed or lm_head will be optimized by AdamW as well.
+        adamw_lr: The learning rate for the internal AdamW.
+        adamw_betas: The betas for the internal AdamW.
+        adamw_eps: The epsilon for the internal AdamW.
+        adamw_wd: The weight decay for the internal AdamW.
+    """
+    
+    def __init__(
+        self,
+        lr=1e-3,
+        wd=0.1,
+        muon_params=None,
+        momentum=0.95,
+        nesterov=True,
+        ns_steps=5,
+        adamw_params=None,
+        adamw_betas=(0.9, 0.95),
+        adamw_eps=1e-8,
+        distributed=False,
+        overlap_comm=False,
+    ):
+        defaults = dict(
+            lr=lr,
+            wd=wd,
+            momentum=momentum,
+            nesterov=nesterov,
+            ns_steps=ns_steps,
+            adamw_betas=adamw_betas,
+            adamw_eps=adamw_eps,
+            distributed=distributed,
+            overlap_comm=overlap_comm,
+        )
+
+        params = list(muon_params) if muon_params is not None else []
+        adamw_params = list(adamw_params) if adamw_params is not None else []
+        params.extend(adamw_params)
+        super().__init__(params, defaults)
+        
+        # Sort parameters into those for which we will use Muon, and those for which we will not
+        for p in muon_params:
+            assert p.ndim == 2, "Muon only supports 2D parameters"
+            self.state[p]["use_muon"] = True
+        for p in adamw_params:
+            self.state[p]["use_muon"] = False
+            
+        for p in params:
+            if "use_muon" not in self.state[p]:
+                self.state[p]["use_muon"] = False  # Default to False if not set
+        
+        # Initialize communication buffers if distributed
+        if distributed:
+            self._init_distributed_buffers()
+
+    def _init_distributed_buffers(self):
+        """Initialize buffers for distributed communication."""
+        for group in self.param_groups:
+            if not group['distributed']:
+                continue
+                
+            for p in group['params']:
+                if not self.state[p]['use_muon']:
+                    continue
+                    
+                # Create buffers for reduce-scatter and all-gather
+                shape = p.shape
+                dtype = p.dtype
+                device = p.device
+                
+                # For reduce-scatter (gradient accumulation)
+                self.state[p]['grad_shard'] = torch.zeros(
+                    (shape[0] // dist.get_world_size(), shape[1]),
+                    dtype=dtype, device=device
+                )
+                
+                # For all-gather (parameter update)
+                self.state[p]['param_full'] = torch.zeros(
+                    shape, dtype=dtype, device=device
+                )
+                
+                # For overlapping communication
+                if group['overlap_comm']:
+                    self.state[p]['grad_full'] = torch.zeros(
+                        shape, dtype=dtype, device=device
+                    )
+                    self.state[p]['grad_ready'] = torch.zeros(1, dtype=torch.bool, device=device)
+
+    def adjust_lr_for_muon(self, lr, param_shape):
+        """Adjust learning rate based on parameter matrix size."""
+        A, B = param_shape[:2]
+        adjusted_ratio = 0.2 * math.sqrt(max(A, B))
+        return lr * adjusted_ratio
+
+    def _distributed_grad_sync(self, p, group):
+        """Synchronize gradients across devices using reduce-scatter."""
+        if not group['distributed']:
+            return p.grad
+            
+        state = self.state[p]
+        grad = p.grad
+        
+        if group['overlap_comm']:
+            # Asynchronous communication path
+            if not state['grad_ready'].item():
+                # Start reduce-scatter
+                dist.reduce_scatter_tensor(
+                    state['grad_shard'], 
+                    grad,
+                    op=dist.ReduceOp.AVG,
+                    async_op=True
+                )
+                state['grad_ready'].fill_(True)
+                return None
+            else:
+                # Wait for completion
+                dist.barrier()
+                state['grad_ready'].fill_(False)
+                return state['grad_shard']
+        else:
+            # Synchronous communication path
+            dist.reduce_scatter_tensor(
+                state['grad_shard'], 
+                grad,
+                op=dist.ReduceOp.AVG
+            )
+            return state['grad_shard']
+
+    def _distributed_param_sync(self, p, group):
+        """Synchronize parameters across devices using all-gather."""
+        if not group['distributed']:
+            return
+            
+        state = self.state[p]
+        if group['overlap_comm']:
+            # Asynchronous all-gather
+            dist.all_gather_into_tensor(
+                state['param_full'],
+                p.data,
+                async_op=True
+            )
+        else:
+            # Synchronous all-gather
+            dist.all_gather_into_tensor(
+                state['param_full'],
+                p.data
+            )
+        
+        # Copy the full parameter back
+        p.data.copy_(state['param_full'])
+
+
+    def print_memory(self):
+        for param_group in self.param_groups:
+            for param in param_group['params']:
+                if param in self.state:
+                    state = self.state[param]
+                    for key, value in state.items():
+                        if isinstance(value, torch.Tensor):
+                            print(f"Variable: {key}, Memory: {value.storage().nbytes() / 1024**2:.2f} MB")
+
+    def step(self, closure=None):
+        """Perform a single optimization step.
+
+        Args:
+            closure (Callable, optional): A closure that reevaluates the model
+                and returns the loss.
+        """
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+
+        self.print_memory()
+        for group in self.param_groups:
+            ############################
+            #           Muon           #
+            ############################
+            params = [p for p in group["params"] if 'use_muon' in self.state[p] and self.state[p]["use_muon"]]
+            lr = group["lr"]
+            wd = group["wd"]
+            momentum = group["momentum"]
+            ns_steps = group["ns_steps"]
+            nesterov = group["nesterov"]
+            distributed = group["distributed"]
+
+            for p in params:
+                if p.grad is None:
+                    continue
+                    
+                # Synchronize gradients across devices
+                grad = self._distributed_grad_sync(p, group)
+                if grad is None:  # Communication is overlapped and not ready yet
+                    continue
+                    
+                # Calculate momentum update
+                state = self.state[p]
+                if "momentum_buffer" not in state:
+                    state["momentum_buffer"] = torch.zeros_like(grad)
+                buf = state["momentum_buffer"]
+                buf.mul_(momentum).add_(grad)
+                
+                if nesterov:
+                    update = grad.add(buf, alpha=momentum)
+                else:
+                    update = buf
+                    
+                # Orthogonalize the update
+                u = fast_newtonschulz(update, steps=ns_steps)
+                
+                # Adjust learning rate and apply weight decay
+                adjusted_lr = self.adjust_lr_for_muon(lr, p.shape)
+                p.data.mul_(1 - lr * wd)
+                
+                # Apply update
+                p.data.add_(u, alpha=-adjusted_lr)
+                
+                # Synchronize parameters across devices
+                if distributed:
+                    self._distributed_param_sync(p, group)
+
+
+            ############################
+            #       AdamW backup       #
+            ############################
+            params = [p for p in group["params"] if 'use_muon' not in self.state[p] or not self.state[p]["use_muon"]]
+            lr = group["lr"]
+            beta1, beta2 = group["adamw_betas"]
+            eps = group["adamw_eps"]
+            weight_decay = group["wd"]
+
+            for p in params:
+                if p.grad is None:
+                    continue
+                    
+                state = self.state[p]
+                if "step" not in state:
+                    state["step"] = 0
+                    state["moment1"] = torch.zeros_like(p.grad)
+                    state["moment2"] = torch.zeros_like(p.grad)
+                    
+                state["step"] += 1
+                step = state["step"]
+                buf1 = state["moment1"]
+                buf2 = state["moment2"]
+                
+                buf1.lerp_(p.grad, 1 - beta1)
+                buf2.lerp_(p.grad.square(), 1 - beta2)
+
+                g = buf1 / (eps + buf2.sqrt())
+
+                bias_correction1 = 1 - beta1**step
+                bias_correction2 = 1 - beta2**step
+                scale = bias_correction1 / bias_correction2**0.5
+                
+                p.data.mul_(1 - lr * weight_decay)
+                p.data.add_(g, alpha=-lr / scale)
+        self.print_memory()
+        return loss
 
 if is_galore_available():
     from galore_torch import GaLoreAdafactor, GaLoreAdamW, GaLoreAdamW8bit  # type: ignore
@@ -218,7 +830,7 @@ def _create_galore_optimizer(
 
     id_galore_params = {id(param) for param in galore_params}
     decay_params, nodecay_params = [], []  # they are non-galore parameters
-    trainable_params: list[torch.nn.Parameter] = []  # galore_params + decay_params + nodecay_params
+    trainable_params: List[torch.nn.Parameter] = []  # galore_params + decay_params + nodecay_params
     decay_param_names = _get_decay_parameter_names(model)
     for name, param in model.named_parameters():
         if param.requires_grad:
@@ -245,7 +857,7 @@ def _create_galore_optimizer(
         if training_args.gradient_accumulation_steps != 1:
             raise ValueError("Per-layer GaLore does not support gradient accumulation.")
 
-        optimizer_dict: dict[torch.Tensor, torch.optim.Optimizer] = {}
+        optimizer_dict: Dict[torch.Tensor, torch.optim.Optimizer] = {}
         for param in nodecay_params:
             param_groups = [dict(params=[param], weight_decay=0.0)]
             optimizer_dict[param] = optim_class(param_groups, **optim_kwargs)
@@ -290,7 +902,7 @@ def _create_apollo_optimizer(
     else:
         apollo_targets = finetuning_args.apollo_target
 
-    apollo_params: list[torch.nn.Parameter] = []
+    apollo_params: List[torch.nn.Parameter] = []
     for name, module in model.named_modules():
         if isinstance(module, torch.nn.Linear) and any(target in name for target in apollo_targets):
             for param in module.parameters():
@@ -309,7 +921,7 @@ def _create_apollo_optimizer(
 
     id_apollo_params = {id(param) for param in apollo_params}
     decay_params, nodecay_params = [], []  # they are non-apollo parameters
-    trainable_params: list[torch.nn.Parameter] = []  # apollo_params + decay_params + nodecay_params
+    trainable_params: List[torch.nn.Parameter] = []  # apollo_params + decay_params + nodecay_params
     decay_param_names = _get_decay_parameter_names(model)
     for name, param in model.named_parameters():
         if param.requires_grad:
@@ -319,6 +931,8 @@ def _create_apollo_optimizer(
                     decay_params.append(param)
                 else:
                     nodecay_params.append(param)
+
+
 
     _, optim_kwargs = Trainer.get_optimizer_cls_and_kwargs(training_args)
 
@@ -332,7 +946,7 @@ def _create_apollo_optimizer(
         if training_args.gradient_accumulation_steps != 1:
             raise ValueError("Per-layer APOLLO does not support gradient accumulation.")
 
-        optimizer_dict: dict[torch.Tensor, torch.optim.Optimizer] = {}
+        optimizer_dict: Dict[torch.Tensor, torch.optim.Optimizer] = {}
         for param in nodecay_params:
             param_groups = [dict(params=[param], weight_decay=0.0)]
             optimizer_dict[param] = optim_class(param_groups, **optim_kwargs)
@@ -374,7 +988,7 @@ def _create_loraplus_optimizer(
     embedding_lr = finetuning_args.loraplus_lr_embedding
 
     decay_param_names = _get_decay_parameter_names(model)
-    param_dict: dict[str, list[torch.nn.Parameter]] = {
+    param_dict: Dict[str, List[torch.nn.Parameter]] = {
         "lora_a": [],
         "lora_b": [],
         "lora_b_nodecay": [],
@@ -489,6 +1103,48 @@ def _create_adam_mini_optimizer(
     logger.info_rank0("Using Adam-mini optimizer.")
     return optimizer
 
+def _create_muon_optimizer(
+    model: "PreTrainedModel",
+    training_args: "TrainingArguments",
+) -> "torch.optim.Optimizer":
+
+    # Separate parameters for Muon (2D parameters) and AdamW (others)
+    muon_params = []
+    adamw_params = []
+
+    for name, param in model.named_parameters():
+        if param.requires_grad:
+            # Use Muon for 2D parameters that aren't embeddings or heads
+            if param.ndim == 2 and "embed" not in name and "lm_head" not in name:
+                muon_params.append(param)
+            else:
+                adamw_params.append(param)
+
+    # Get optimizer settings from training_args
+    ns_steps = getattr(training_args, "ns_steps", 5)
+    # Determine if we're in distributed mode
+    distributed = getattr(training_args, "local_rank", -1) != -1
+    overlap_comm = getattr(training_args, "overlap_comm", False)
+
+    # Create Muon optimizer
+    optimizer = Muon(
+        lr=training_args.learning_rate,
+        wd=training_args.weight_decay,
+        muon_params=muon_params,
+        momentum=0.95,  # default momentum for Muon
+        nesterov=True,  # default nesterov for Muon
+        ns_steps=ns_steps,
+        adamw_params=adamw_params,
+        adamw_betas=(training_args.adam_beta1, training_args.adam_beta2),
+        adamw_eps=training_args.adam_epsilon,
+        distributed=distributed,
+        overlap_comm=overlap_comm,
+    )
+    logger.info_rank0(
+        f"Using Muon optimizer with {len(muon_params)} Muon params and {len(adamw_params)} AdamW params."
+        f"Distributed: {distributed}, Overlap comm: {overlap_comm}"
+    )
+    return optimizer
 
 def _create_muon_optimizer(
     model: "PreTrainedModel",
@@ -524,6 +1180,10 @@ def create_custom_optimizer(
     training_args: "TrainingArguments",
     finetuning_args: "FinetuningArguments",
 ) -> Optional["torch.optim.Optimizer"]:
+
+    if finetuning_args.use_muon:
+        return _create_muon_optimizer(model, training_args)
+
     if finetuning_args.use_galore:
         return _create_galore_optimizer(model, training_args, finetuning_args)
 
@@ -566,7 +1226,7 @@ def create_custom_scheduler(
 
     if optimizer is not None and isinstance(optimizer, DummyOptimizer):
         optimizer_dict = optimizer.optimizer_dict
-        scheduler_dict: dict[torch.nn.Parameter, torch.optim.lr_scheduler.LRScheduler] = {}
+        scheduler_dict: Dict[torch.nn.Parameter, torch.optim.lr_scheduler.LRScheduler] = {}
 
         for param in optimizer_dict.keys():
             scheduler_dict[param] = get_scheduler(

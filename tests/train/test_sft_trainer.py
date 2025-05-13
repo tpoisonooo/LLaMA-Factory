@@ -16,7 +16,6 @@ import os
 from dataclasses import dataclass, field
 from typing import Any
 
-import pytest
 from transformers import DataCollatorWithPadding
 
 from llamafactory.data import get_dataset, get_template_and_fix_tokenizer
@@ -27,21 +26,25 @@ from llamafactory.train.sft.trainer import CustomSeq2SeqTrainer
 
 DEMO_DATA = os.getenv("DEMO_DATA", "llamafactory/demo_data")
 
-TINY_LLAMA3 = os.getenv("TINY_LLAMA3", "llamafactory/tiny-random-Llama-3")
+TINY_LLAMA = os.getenv("TINY_LLAMA", "/fs-computility/ai4agr/shared/Qwen2.5-0.5B-Instruct")
 
 TRAIN_ARGS = {
-    "model_name_or_path": TINY_LLAMA3,
+    "model_name_or_path": "/fs-computility/ai4agr/shared/Qwen2.5-0.5B-Instruct",
     "stage": "sft",
     "do_train": True,
-    "finetuning_type": "lora",
+    "finetuning_type": "full",
     "dataset": "llamafactory/tiny-supervised-dataset",
     "dataset_dir": "ONLINE",
-    "template": "llama3",
-    "cutoff_len": 1024,
+    "template": "qwen",
+    "cutoff_len": 128,
     "overwrite_output_dir": True,
-    "per_device_train_batch_size": 1,
-    "max_steps": 1,
-    "report_to": "none",
+    "output_dir": "saves/trash/full/sft",
+    "per_device_train_batch_size": 2,
+    "save_steps": -1,
+    "num_train_epochs": 1,
+    "save_strategy": "epoch",
+    "use_muon": False,
+    "use_flash_attn": False
 }
 
 
@@ -59,8 +62,8 @@ class DataCollatorWithVerbose(DataCollatorWithPadding):
         return {k: v[:, :1] for k, v in batch.items()}  # truncate input length
 
 
-@pytest.mark.parametrize("disable_shuffling", [False, True])
-def test_shuffle(disable_shuffling: bool):
+# @pytest.mark.parametrize("disable_shuffling", [False, True])
+def test_shuffle(disable_shuffling: bool = True):
     model_args, data_args, training_args, finetuning_args, _ = get_train_args(
         {
             "output_dir": os.path.join("output", f"shuffle{str(disable_shuffling).lower()}"),
@@ -68,6 +71,9 @@ def test_shuffle(disable_shuffling: bool):
             **TRAIN_ARGS,
         }
     )
+
+    # import pdb
+    # pdb.set_trace()
     tokenizer_module = load_tokenizer(model_args)
     tokenizer = tokenizer_module["tokenizer"]
     template = get_template_and_fix_tokenizer(tokenizer, data_args)
@@ -87,3 +93,6 @@ def test_shuffle(disable_shuffling: bool):
         assert data_collator.verbose_list[0]["input_ids"] == dataset_module["train_dataset"][0]["input_ids"]
     else:
         assert data_collator.verbose_list[0]["input_ids"] != dataset_module["train_dataset"][0]["input_ids"]
+
+if __name__ == "__main__":
+    test_shuffle()

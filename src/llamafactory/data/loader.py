@@ -245,6 +245,10 @@ def _get_preprocessed_dataset(
         data_args, stage, template, tokenizer, processor, do_generate=(training_args.predict_with_generate and is_eval)
     )
     column_names = list(next(iter(dataset)).keys())
+    # column_names = []
+    # for k in list(next(iter(dataset)).keys()):
+    #     if k != 'source':
+    #         column_names.append(k)
     kwargs = {}
     if not data_args.streaming:
         kwargs = dict(
@@ -253,6 +257,7 @@ def _get_preprocessed_dataset(
             desc="Running tokenizer on dataset",
         )
 
+    # column_names = ['source', 'messages', '_prompt', '_response', '_system', '_tools', '_images', '_videos', '_audios']
     dataset = dataset.map(
         dataset_processor.preprocess_dataset,
         batched=True,
