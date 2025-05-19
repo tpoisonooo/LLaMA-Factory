@@ -20,8 +20,8 @@ dataloader_num_workers: 8
 streaming: false
 
 ### output
-output_dir: saves/qwen25/full/sft
-logging_steps: 10
+output_dir: saves/qwen25_nopack/full/sft
+logging_steps: 5
 save_steps: -1
 save_strategy: epoch
 
@@ -31,7 +31,7 @@ save_only_model: true
 report_to: wandb  # choices: [none, wandb, tensorboard, swanlab, mlflow]
 
 ### packing
-packing: true
+packing: false
 neat_packing: false
 mix_strategy: concat
 
@@ -39,7 +39,7 @@ mix_strategy: concat
 per_device_train_batch_size: 4
 gradient_accumulation_steps: 16
 learning_rate: 5.0e-5
-num_train_epochs: 2.0
+num_train_epochs: 3
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true
