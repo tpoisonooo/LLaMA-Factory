@@ -43,6 +43,37 @@ import torch
 import torch.distributed as dist
 from torch.optim import Optimizer
 
+from .matmul_transpose_triton import matmul_transpose_assign
+
+def fast_newtonschulz(G: torch.Tensor, steps: int=5) -> torch.Tensor:
+    """
+    adapted from https://github.com/KellerJordan/Muon/blob/master/muon.py
+    Arguments:
+        G: The gradient or momentum matrix to be orthogonalized.
+        steps: Number of Newton-Schulz iterations.
+    """
+    assert G.ndim >= 2
+    a, b, c = (3.4445, -4.7750,  2.0315)
+    X = G.bfloat16()
+    if G.size(-2) > G.size(-1):
+        X = X.mT
+
+    buf1 = torch.empty(X.size(0), X.size(0), dtype=X.dtype, device=X.device)
+    buf2 = torch.empty(X.size(0), X.size(0), dtype=X.dtype, device=X.device)
+    
+    # Ensure spectral norm is at most 1
+    X = X / (X.norm(dim=(-2, -1), keepdim=True) + 1e-7)
+    # Perform the NS iterations
+    for _ in range(steps):
+        matmul_transpose_assign(X, buf1)
+        matmul_transpose_assign(buf1, buf2)
+        B = b * buf1 + c * buf2
+        X = a * X + B @ X
+    
+    if G.size(-2) > G.size(-1):
+        X = X.mT
+    return X
+
 # This code snippet is a modified version adapted from the following GitHub repository:
 # https://github.com/KellerJordan/Muon/blob/master/muon.py
 @torch.compile
@@ -287,7 +318,7 @@ class MuonBad(Optimizer):
                     g = g.add(buf, alpha=momentum)
                 else:
                     g = buf
-                u = zeropower_via_newtonschulz5(g, steps=group["ns_steps"])
+                u = fast_newtonschulz(g, steps=group["ns_steps"])
 
                 # scale update
                 adjusted_lr = self.adjust_lr_for_muon(lr, p.shape)
@@ -548,7 +579,7 @@ class Muon(Optimizer):
                     update = buf
                     
                 # Orthogonalize the update
-                u = zeropower_via_newtonschulz5(update, steps=ns_steps)
+                u = fast_newtonschulz(update, steps=ns_steps)
                 
                 # Adjust learning rate and apply weight decay
                 adjusted_lr = self.adjust_lr_for_muon(lr, p.shape)
