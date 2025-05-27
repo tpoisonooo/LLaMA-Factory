@@ -252,8 +252,13 @@ def align_dataset(
         _videos: [],
         _audios: [],
     """
-
     column_names = list(next(iter(dataset)).keys())
+
+    # column_names = []
+    # for k in list(next(iter(dataset)).keys()):
+    #     if k != 'source':
+    #         column_names.append(k)
+    
     kwargs = {}
     if not data_args.streaming:
         kwargs = dict(

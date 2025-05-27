@@ -16,7 +16,6 @@ import os
 from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
-import pytest
 from transformers import DataCollatorWithPadding
 
 from llamafactory.data import get_dataset, get_template_and_fix_tokenizer
@@ -30,7 +29,7 @@ DEMO_DATA = os.getenv("DEMO_DATA", "llamafactory/demo_data")
 TINY_LLAMA = os.getenv("TINY_LLAMA", "/fs-computility/ai4agr/shared/Qwen2.5-0.5B-Instruct")
 
 TRAIN_ARGS = {
-    "model_name_or_path": TINY_LLAMA,
+    "model_name_or_path": "/fs-computility/ai4agr/shared/Qwen2.5-0.5B-Instruct",
     "stage": "sft",
     "do_train": True,
     "finetuning_type": "full",
@@ -40,11 +39,12 @@ TRAIN_ARGS = {
     "cutoff_len": 128,
     "overwrite_output_dir": True,
     "output_dir": "saves/trash/full/sft",
-    "per_device_train_batch_size": 1,
+    "per_device_train_batch_size": 2,
     "save_steps": -1,
     "num_train_epochs": 1,
     "save_strategy": "epoch",
-    "use_muon": True
+    "use_muon": False,
+    "use_flash_attn": False
 }
 
 
@@ -68,6 +68,8 @@ def test_shuffle(disable_shuffling: bool = True):
         }
     )
 
+    # import pdb
+    # pdb.set_trace()
     tokenizer_module = load_tokenizer(model_args)
     tokenizer = tokenizer_module["tokenizer"]
     template = get_template_and_fix_tokenizer(tokenizer, data_args)
