@@ -128,6 +128,29 @@ class SupervisedDatasetProcessor(DatasetProcessor):
 
 @dataclass
 class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
+    def convert_source_to_id(self, source:str):
+        if 'arabidosis' in source:
+            return 0
+        elif 'autoif' in source:
+            return 1
+        elif 'coding' in source:
+            return 2
+        elif 'common' in source:
+            return 3
+        elif 'math' in source:
+            return 4
+        elif 'others' in source:
+            return 5
+        elif 'corn' in source:
+            return 6
+        elif 'rice' in source:
+            return 7
+        elif 'cognition' in source:
+            return 8
+        elif 'soybean' in source:
+            return 9
+        else:
+            return 100
     def preprocess_dataset(self, examples: Dict[str, List[Any]]) -> Dict[str, List[Any]]:
         # TODO: use `position_ids` to achieve packing
         # build inputs with format `<bos> X1 Y1 <eos> <bos> X2 Y2 <eos>`
@@ -166,10 +189,11 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
                 batch_images.append(examples["_images"][i] or [])
                 batch_videos.append(examples["_videos"][i] or [])
                 batch_audios.append(examples["_audios"][i] or [])
-                # ## user define begin
+                ## user define begin
                 # batch_messages.append(examples['messages'][i] or [])
-                # batch_source.append(examples['source'][i] or [])
-                # ## user define end
+                
+                batch_source.append([self.convert_source_to_id(examples['source'][i])] or [])
+                ## user define end
                 valid_num += 1
 
         model_inputs = defaultdict(list)
@@ -179,7 +203,7 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
             packed_images, packed_videos, packed_audios = [], [], []
             # ## user define begin
             # packed_messages = []
-            # packed_source = []
+            packed_source = []
             # ## user define end
             for i, length in enumerate(knapsack):
                 index = length2indexes[length].pop()
@@ -189,10 +213,11 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
                 packed_videos += batch_videos[index]
                 packed_audios += batch_audios[index]
 
-                # ## user define begin
+                ## user define begin
                 # packed_messages += batch_messages[index]
-                # packed_source += batch_source[index]
-                # ## user define end
+                if len(packed_source) == 0:  # packed, see as first one
+                    packed_source += batch_source[index]
+                ## user define end
 
                 if self.data_args.neat_packing:
                     packed_attention_masks += [i + 1] * len(batch_input_ids[index])  # start from 1
@@ -217,9 +242,8 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
             model_inputs["images"].append(packed_images or None)
             model_inputs["videos"].append(packed_videos or None)
             model_inputs["audios"].append(packed_audios or None)
-            # ## user define begin
+            ## user define begin
             # model_inputs["messages"].append(packed_messages or None)
-            # model_inputs["source"].append(packed_source or None)
-            # ## user define end
-
+            model_inputs["xsource"].append(packed_source or None)
+            ## user define end
         return model_inputs

@@ -271,6 +271,6 @@ def align_dataset(
     return dataset.map(
         dataset_converter,
         batched=False,
-        remove_columns=column_names,
+        # remove_columns=column_names,
         **kwargs,
     )
