@@ -149,6 +149,10 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
             return 8
         elif 'soybean' in source:
             return 9
+        elif 'badcase' in source:
+            return 10
+        elif 'format' in source:
+            return 11
         else:
             return 100
     def preprocess_dataset(self, examples: Dict[str, List[Any]]) -> Dict[str, List[Any]]:

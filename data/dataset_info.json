@@ -27,6 +27,34 @@
       "system_tag": "system"
     }
   },
+  "sft_agr_badcase_5w": {
+    "file_name": "/root/code/LLaMA-Factory/clean/v1/sft_agr_badcase_5w.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "sft_agr_format_8k": {
+    "file_name": "/root/code/LLaMA-Factory/clean/v1/sft_agr_format_data_8k.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
   "sft_arabidosis_5w": {
     "file_name": "/root/code/LLaMA-Factory/clean/v1/sft_arabidosis_5w.json",
     "formatting": "sharegpt",
@@ -43,6 +71,20 @@
   },
   "sft_corn_9w": {
     "file_name": "/root/code/LLaMA-Factory/clean/v1/sft_corn_9w.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "sft_corn_9w_ppl_low": {
+    "file_name": "/root/code/LLaMA-Factory/clean/v2/sft_corn_9w_filter_high.json",
     "formatting": "sharegpt",
     "columns": {
       "messages": "messages"
