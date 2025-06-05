@@ -154,7 +154,7 @@
     }
   },
   "sft_com_math_light7w": {
-    "file_name": "/fs-computility/ai4agr/konghuanjun/LLaMA-Factory/clean/v2/sft_math_stage1_7w.json",
+    "file_name": "/fs-computility/ai4agr/konghuanjun/LLaMA-Factory/clean/v2/sft_light_math_filter_7w.json",
     "formatting": "sharegpt",
     "columns": {
       "messages": "messages"

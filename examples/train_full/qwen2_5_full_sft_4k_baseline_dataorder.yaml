@@ -21,7 +21,7 @@ dataloader_num_workers: 8
 streaming: false
 
 ### output
-output_dir: saves/qwen25_dataorder_domainloss_try2/full/sft
+output_dir: saves/domainloss_try4/full/sft
 logging_steps: 1
 save_steps: -1
 save_strategy: epoch
