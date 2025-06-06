@@ -153,8 +153,8 @@
       "system_tag": "system"
     }
   },
-  "sft_com_math_light7w": {
-    "file_name": "/fs-computility/ai4agr/konghuanjun/LLaMA-Factory/clean/v2/sft_light_math_filter_7w.json",
+  "sft_com_math_light5w": {
+    "file_name": "/fs-computility/ai4agr/konghuanjun/LLaMA-Factory/clean/v2/math_stage12_5w.json",
     "formatting": "sharegpt",
     "columns": {
       "messages": "messages"

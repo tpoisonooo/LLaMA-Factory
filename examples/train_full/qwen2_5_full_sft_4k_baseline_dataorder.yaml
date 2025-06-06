@@ -10,7 +10,7 @@ deepspeed: examples/deepspeed/ds_z2_config.json  # choices: [ds_z0_config.json, 
 # 当前版本增加自我认识
 # 当前版本加 corn ppl filter 后的数据
 ### dataset
-dataset: sft_com_math_light7w,sft_com_coding_5w1,sft_arabidosis_5w,sft_corn_9w_ppl_low,sft_rice_4w,sft_soybean_11w,sft_com_common_7w7,sft_com_autoif_6w,sft_com_others_7w6,sft_self_cognition_v2,sft_agr_badcase_5w
+dataset: sft_com_math_light5w,sft_com_coding_5w1,sft_arabidosis_5w,sft_corn_9w_ppl_low,sft_rice_4w,sft_soybean_11w,sft_com_common_7w7,sft_com_autoif_6w,sft_com_others_7w6,sft_self_cognition_v2,sft_agr_badcase_5w
 # dataset: sft_arabidosis_5w,sft_corn_9w,sft_rice_4w,sft_soybean_11w,sft_com_autoif_6w,sft_com_data_30w,sft_self_cognition_v2
 template: qwen
 cutoff_len: 4096
@@ -42,7 +42,7 @@ mix_strategy: concat
 per_device_train_batch_size: 4
 gradient_accumulation_steps: 16
 learning_rate: 5.0e-5
-num_train_epochs: 3
+num_train_epochs: 2
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
 bf16: true
