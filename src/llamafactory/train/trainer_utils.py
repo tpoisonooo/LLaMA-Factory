@@ -53,6 +53,14 @@ def fast_newtonschulz(G: torch.Tensor, steps: int=5) -> torch.Tensor:
         steps: Number of Newton-Schulz iterations.
     """
     assert G.ndim >= 2
+    # copy from https://kexue.fm/archives/10922
+    params = [
+        (4.6182, -12.9582, 9.3299),
+        (3.8496, -7.9585, 4.3052),
+        (3.5204, -7.2918, 4.0606),
+        (3.2067, -6.8243, 4.2802),
+        (3.2978, -5.7848, 3.8917)
+    ]
     a, b, c = (3.4445, -4.7750,  2.0315)
     X = G.bfloat16()
     if G.size(-2) > G.size(-1):
@@ -64,7 +72,8 @@ def fast_newtonschulz(G: torch.Tensor, steps: int=5) -> torch.Tensor:
     # Ensure spectral norm is at most 1
     X = X / (X.norm(dim=(-2, -1), keepdim=True) + 1e-7)
     # Perform the NS iterations
-    for _ in range(steps):
+    for i in range(steps):
+        a,b,c = params[i]
         matmul_transpose_assign(X, buf1)
         matmul_transpose_assign(buf1, buf2)
         B = b * buf1 + c * buf2

@@ -1,0 +1,58 @@
+### model
+model_name_or_path: saves/12k_s1
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+deepspeed: examples/deepspeed/ds_z2_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
+# 当前版本增加自我认识
+# 当前版本加 corn ppl filter 后的数据
+### dataset
+dataset: s2_1w, s2_math3k
+# dataset: sft_arabidosis_5w,sft_corn_9w,sft_rice_4w,sft_soybean_11w,sft_com_autoif_6w,sft_com_data_30w,sft_self_cognition_v2
+template: qwen
+cutoff_len: 12288
+overwrite_cache: false
+preprocessing_num_workers: 16
+dataloader_num_workers: 8
+streaming: false
+
+### output
+output_dir: saves/12k_s2
+logging_steps: 1
+save_steps: -1
+save_strategy: epoch
+
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: true
+report_to: tensorboard  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+use_swanlab: true
+swanlab_run_name: s2_12k_250607
+
+
+### packing
+packing: true
+neat_packing: false
+mix_strategy: concat
+
+### train
+per_device_train_batch_size: 1
+gradient_accumulation_steps: 8
+learning_rate: 1.0e-6
+num_train_epochs: 3
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+ddp_timeout: 180000000
+resume_from_checkpoint: null
+flash_attn: fa2
+
+### eval
+# eval_dataset: alpaca_en_demo
+# val_size: 0.1
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 500
