@@ -42,6 +42,34 @@
       "system_tag": "system"
     }
   },
+  "math5w_8k": {
+    "file_name": "/tos-bjml-ai4agr/konghuanjun/clean/v4_1/math5w_8k.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "math6w_12k": {
+    "file_name": "/tos-bjml-ai4agr/konghuanjun/clean/v4_1/math6w_12k.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
   "s1_math7w": {
     "file_name": "/tos-bjml-ai4agr/konghuanjun/clean/v4_1/s1_math7w_16k.json",
     "formatting": "sharegpt",

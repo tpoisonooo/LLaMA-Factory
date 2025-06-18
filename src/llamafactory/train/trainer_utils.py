@@ -542,6 +542,16 @@ class Muon(Optimizer):
         # Copy the full parameter back
         p.data.copy_(state['param_full'])
 
+
+    def print_memory(self):
+        for param_group in self.param_groups:
+            for param in param_group['params']:
+                if param in self.state:
+                    state = self.state[param]
+                    for key, value in state.items():
+                        if isinstance(value, torch.Tensor):
+                            print(f"Variable: {key}, Memory: {value.storage().nbytes() / 1024**2:.2f} MB")
+
     def step(self, closure=None):
         """Perform a single optimization step.
 
@@ -554,6 +564,7 @@ class Muon(Optimizer):
             with torch.enable_grad():
                 loss = closure()
 
+        self.print_memory()
         for group in self.param_groups:
             ############################
             #           Muon           #
@@ -601,6 +612,7 @@ class Muon(Optimizer):
                 if distributed:
                     self._distributed_param_sync(p, group)
 
+
             ############################
             #       AdamW backup       #
             ############################
@@ -636,7 +648,7 @@ class Muon(Optimizer):
                 
                 p.data.mul_(1 - lr * weight_decay)
                 p.data.add_(g, alpha=-lr / scale)
-
+        self.print_memory()
         return loss
 
 if is_galore_available():

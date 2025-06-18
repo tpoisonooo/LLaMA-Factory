@@ -11,9 +11,9 @@ deepspeed: examples/deepspeed/ds_z2_config.json  # choices: [ds_z0_config.json, 
 # 当前版本加 corn ppl filter 后的数据
 ### dataset
 # dataset: s1_61w,s2_1w,s1_math7w,s2_math3k, 效果不好
-dataset: s1_61w,s2_1w,s1_math7w
+dataset: s1_61w,s2_1w,math5w_8k
 template: qwen
-cutoff_len: 16384
+cutoff_len: 4096
 overwrite_cache: false
 preprocessing_num_workers: 16
 dataloader_num_workers: 8
@@ -21,7 +21,7 @@ streaming: false
 use_muon: true
 
 ### output
-output_dir: saves/16k_s_muon
+output_dir: saves/8k_s_muon
 logging_steps: 1
 save_steps: -1
 save_strategy: epoch
@@ -31,7 +31,7 @@ overwrite_output_dir: true
 save_only_model: true
 report_to: tensorboard  # choices: [none, wandb, tensorboard, swanlab, mlflow]
 use_swanlab: true
-swanlab_run_name: s_16k_muon
+swanlab_run_name: s_8k_muon
 
 ### packing
 packing: true
@@ -41,7 +41,7 @@ mix_strategy: concat
 ### train
 per_device_train_batch_size: 1
 gradient_accumulation_steps: 8
-learning_rate: 5.0e-6
+learning_rate: 5.0e-5
 num_train_epochs: 3
 lr_scheduler_type: cosine
 warmup_ratio: 0.1
