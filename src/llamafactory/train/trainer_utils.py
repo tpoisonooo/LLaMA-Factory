@@ -1199,9 +1199,6 @@ def create_custom_optimizer(
     if finetuning_args.use_adam_mini:
         return _create_adam_mini_optimizer(model, training_args)
 
-    if finetuning_args.use_muon:
-        return _create_muon_optimizer(model, training_args)
-
 
 def create_custom_scheduler(
     training_args: "TrainingArguments",

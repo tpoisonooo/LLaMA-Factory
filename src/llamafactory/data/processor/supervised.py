@@ -119,6 +119,7 @@ class SupervisedDatasetProcessor(DatasetProcessor):
         return model_inputs
 
     def print_data_example(self, example: dict[str, list[int]]) -> None:
+        print(f'{__file__}')
         valid_labels = list(filter(lambda x: x != IGNORE_INDEX, example["labels"]))
         print("input_ids:\n{}".format(example["input_ids"]))
         print("inputs:\n{}".format(self.tokenizer.decode(example["input_ids"], skip_special_tokens=False)))
@@ -153,9 +154,12 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
             return 10
         elif 'format' in source:
             return 11
+        elif 'maize' in source:
+            return 12
         else:
             return 100
-    def preprocess_dataset(self, examples: Dict[str, List[Any]]) -> Dict[str, List[Any]]:
+
+    def preprocess_dataset(self, examples: dict[str, list[Any]]) -> dict[str, list[Any]]:
         # TODO: use `position_ids` to achieve packing
         # build inputs with format `<bos> X1 Y1 <eos> <bos> X2 Y2 <eos>`
         # and labels with format `<ignore> ... <ignore> Y1 <eos> <ignore> ... <ignore> Y2 <eos>`
@@ -208,7 +212,7 @@ class PackedSupervisedDatasetProcessor(SupervisedDatasetProcessor):
             # ## user define begin
             # packed_messages = []
             packed_source = []
-            # ## user define end
+            # ## user define endq
             for i, length in enumerate(knapsack):
                 index = length2indexes[length].pop()
                 packed_input_ids += batch_input_ids[index]

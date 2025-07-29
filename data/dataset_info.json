@@ -27,7 +27,63 @@
       "system_tag": "system"
     }
   },
+  "s_61w": {
+    "file_name": "/tos-bjml-ai4agr/konghuanjun/clean/v5/s_61w_0709.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
 
+  "s_62w": {
+    "file_name": "/tos-bjml-ai4agr/konghuanjun/clean/v5/s_62w.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "s_70w_rewrite_ep2": {
+    "file_name": "/tos-bjml-ai4agr/konghuanjun/clean/v5/s_0729_ep2.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "s_70w_rewrite_ep3": {
+    "file_name": "/tos-bjml-ai4agr/konghuanjun/clean/v5/s_0729_ep3.jsonl",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
   "s1_61w": {
     "file_name": "/tos-bjml-ai4agr/konghuanjun/clean/v4_1/s1_61w.json",
     "formatting": "sharegpt",
@@ -142,6 +198,20 @@
   },
   "sft_arabidosis_5w": {
     "file_name": "/root/code/LLaMA-Factory/clean/v1/sft_arabidosis_5w.json",
+    "formatting": "sharegpt",
+    "columns": {
+      "messages": "messages"
+    },
+    "tags": {
+      "role_tag": "role",
+      "content_tag": "content",
+      "user_tag": "user",
+      "assistant_tag": "assistant",
+      "system_tag": "system"
+    }
+  },
+  "sft_maize_3w": {
+    "file_name": "/root/code/LLaMA-Factory/clean/v3/sft_maize_3w.json",
     "formatting": "sharegpt",
     "columns": {
       "messages": "messages"

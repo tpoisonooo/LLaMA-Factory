@@ -268,7 +268,7 @@ def _get_preprocessed_dataset(
 
     if training_args.should_log:
         try:
-            print("eval example:" if is_eval else "training example:")
+            print(f"!!! {__file__} eval example:" if is_eval else f"!!! {__file__} training example:")
             dataset_processor.print_data_example(next(iter(dataset)))
         except StopIteration:
             if stage == "pt":
