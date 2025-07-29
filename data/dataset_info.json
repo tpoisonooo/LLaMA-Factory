@@ -57,7 +57,7 @@
     }
   },
   "s_70w_rewrite_ep2": {
-    "file_name": "/tos-bjml-ai4agr/konghuanjun/clean/v5/s_0729_ep2.jsonl",
+    "file_name": "/tos-bjml-ai4agr/konghuanjun/clean/v5/s_0729_ep2.json",
     "formatting": "sharegpt",
     "columns": {
       "messages": "messages"
@@ -71,7 +71,7 @@
     }
   },
   "s_70w_rewrite_ep3": {
-    "file_name": "/tos-bjml-ai4agr/konghuanjun/clean/v5/s_0729_ep3.jsonl",
+    "file_name": "/tos-bjml-ai4agr/konghuanjun/clean/v5/s_0729_ep3.json",
     "formatting": "sharegpt",
     "columns": {
       "messages": "messages"

@@ -1,0 +1,71 @@
+### model
+model_name_or_path: /fs-computility/ai4agr/shared/Qwen2.5-7B-Instruct
+trust_remote_code: true
+
+### method
+stage: sft
+do_train: true
+finetuning_type: full
+# z2_offload 预估耗时 27h
+# deepspeed: examples/deepspeed/ds_z2_offload_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
+# z3 耗时 24h
+deepspeed: examples/deepspeed/ds_z3_config.json  # choices: [ds_z0_config.json, ds_z2_config.json, ds_z3_config.json]
+
+# 当前版本增加自我认识
+# 当前版本加 corn ppl filter 后的数据
+# 删除通用中 question == response、问答都很短的 case 几十条
+# [revert]删除 other 中 image prompt，看 loss 好，但精度效果不好
+# [revert]训练期间有 loss spike
+### dataset
+# 开启 pure_bf16
+# dataset: s_62w,sft_maize_3w,math6w_12k
+# dataset: s_62w,sft_maize_3w,math6w_12k 做了两次重写和过滤
+dataset: s_61w,sft_maize_3w,math6w_12k,s_70w_rewrite_ep2,s_70w_rewrite_ep3
+# dataset: sft_maize_3w
+
+template: qwen
+# 数据 12k，训练长度 12k
+cutoff_len: 12288
+overwrite_cache: false
+preprocessing_num_workers: 16
+dataloader_num_workers: 8
+streaming: false
+
+### output
+# 基于重写的方法
+output_dir: saves/12k_s1_maize_k2_rewrite
+logging_steps: 1
+save_steps: 600
+save_strategy: steps
+
+plot_loss: true
+overwrite_output_dir: true
+save_only_model: false
+report_to: none  # choices: [none, wandb, tensorboard, swanlab, mlflow]
+use_swanlab: true
+swanlab_run_name: s1_12k_maze_250729
+
+### packing
+packing: true
+neat_packing: false
+mix_strategy: concat
+
+### train
+per_device_train_batch_size: 2
+gradient_accumulation_steps: 8
+learning_rate: 5.0e-6
+num_train_epochs: 1
+lr_scheduler_type: cosine
+warmup_ratio: 0.1
+bf16: true
+# pure_bf16: true
+ddp_timeout: 180000000
+resume_from_checkpoint: null
+flash_attn: fa2
+
+### eval
+# eval_dataset: alpaca_en_demo
+# val_size: 0.1
+# per_device_eval_batch_size: 1
+# eval_strategy: steps
+# eval_steps: 500
